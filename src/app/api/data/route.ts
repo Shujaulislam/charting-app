@@ -54,18 +54,59 @@ export async function GET(request: Request) {
       );
     }
 
+    // Collect filters from query params
+    const filters: { column: string; value: string }[] = [];
+    let index = 0;
+    while (true) {
+      const column = searchParams.get(`filter_column_${index}`);
+      const value = searchParams.get(`filter_value_${index}`);
+      if (!column || !value) break;
+      
+      // Validate filter column names
+      if (!columns.includes(column) || !/^[a-zA-Z0-9_]+$/.test(column)) {
+        return NextResponse.json(
+          { error: 'Invalid filter column name' },
+          { status: 400 }
+        );
+      }
+      
+      filters.push({ column, value });
+      index++;
+    }
+
     // Calculate offset
     const offset = (page - 1) * pageSize;
 
     // Build the queries safely using backticks for identifiers
     const columnList = columns.map(col => `\`${col}\``).join(',');
-    const countQuery = `SELECT COUNT(*) as total FROM \`${table}\``;
-    const dataQuery = `SELECT ${columnList} FROM \`${table}\` LIMIT ${pageSize} OFFSET ${offset}`;
     
-    // Execute both queries
+    // Build WHERE clause for filters
+    const whereClause = filters.length > 0
+      ? 'WHERE ' + filters.map((f, i) => `\`${f.column}\` = ?`).join(' AND ')
+      : '';
+    
+    const filterValues = filters.map(f => f.value);
+
+    // Count total rows with filters
+    const countQuery = `
+      SELECT COUNT(*) as total 
+      FROM \`${table}\`
+      ${whereClause}
+    `;
+    
+    // Get paginated data with filters
+    const dataQuery = `
+      SELECT ${columnList}
+      FROM \`${table}\`
+      ${whereClause}
+      LIMIT ${pageSize}
+      OFFSET ${offset}
+    `;
+    
+    // Execute both queries with filter values
     const [countResult, rows] = await Promise.all([
-      executeQuery(countQuery),
-      executeQuery(dataQuery)
+      executeQuery(countQuery, filterValues),
+      executeQuery(dataQuery, filterValues)
     ]);
     
     const total = (countResult as any[])[0].total;

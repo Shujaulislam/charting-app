@@ -17,21 +17,15 @@ import { useState } from 'react';
 type DataTableProps = {
   table: string;
   columns: string[];
+  filters?: { column: string; value: string }[];
 };
 
-type PaginationData = {
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-};
-
-export function DataTable({ table, columns }: DataTableProps) {
+export function DataTable({ table, columns, filters = [] }: DataTableProps) {
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['tableData', table, columns, page, pageSize],
+    queryKey: ['tableData', table, columns, page, pageSize, filters],
     queryFn: async () => {
       if (!table || !columns.length) return null;
       
@@ -40,6 +34,12 @@ export function DataTable({ table, columns }: DataTableProps) {
         columns: columns.join(','),
         page: page.toString(),
         pageSize: pageSize.toString()
+      });
+
+      // Add filters to params
+      filters.forEach((filter, index) => {
+        params.append(`filter_column_${index}`, filter.column);
+        params.append(`filter_value_${index}`, filter.value);
       });
 
       const response = await fetch(`/api/data?${params}`);
@@ -84,7 +84,7 @@ export function DataTable({ table, columns }: DataTableProps) {
     );
   }
 
-  const pagination: PaginationData = data.pagination;
+  const pagination = data.pagination;
 
   return (
     <div className="space-y-4">
