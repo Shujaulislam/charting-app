@@ -89,7 +89,7 @@ export function DashboardLayout() {
                   <ColumnFilters
                     table={selectedTable}
                     columns={selectedColumns}
-                    onFiltersChange={handleFiltersChange}
+                    onFiltersChange={(filters) => handleFiltersChange([...filters])}
                   />
                 </div>
 
