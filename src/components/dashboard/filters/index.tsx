@@ -1,51 +1,16 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { Label } from '@/components/ui/label';
-import { LoadingSpinner } from '../ui/loading-spinner';
-import { Check, ChevronsUpDown } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-
-// Strict type definitions
-interface ColumnFilter {
-  readonly column: string;
-  readonly value: string;
-}
-
-interface DistinctValue {
-  readonly value: string | number | null;
-  readonly count: number;
-}
+import { FilterList } from './FilterList';
+import { FilterPopover } from './FilterPopover';
+import { ColumnFilter, DistinctValue, LoadingState, DistinctValuesState } from './types';
 
 interface ColumnFiltersProps {
   readonly table: string;
   readonly columns: readonly string[];
   onFiltersChange: (filters: readonly ColumnFilter[]) => void;
 }
-
-interface FetchResult {
-  readonly values?: readonly DistinctValue[];
-  readonly isIdColumn?: boolean;
-  readonly error?: string;
-}
-
-type LoadingState = Readonly<Record<string, boolean>>;
-type DistinctValuesState = Readonly<Record<string, readonly DistinctValue[]>>;
 
 // Add utility for fetch with timeout
 const fetchWithTimeout = async (url: string, signal: AbortSignal, timeout = 5000) => {
@@ -69,12 +34,10 @@ export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFilters
   const columnsRef = useRef(columns);
 
   // State with proper readonly types
-  const [openPopover, setOpenPopover] = useState<string | null>(null);
   const [distinctValues, setDistinctValues] = useState<DistinctValuesState>({});
   const [excludedColumns, setExcludedColumns] = useState<readonly string[]>([]);
   const [activeFilters, setActiveFilters] = useState<readonly ColumnFilter[]>([]);
   const [loading, setLoading] = useState<LoadingState>({});
-  const [searchValue, setSearchValue] = useState('');
   const { toast } = useToast();
 
   // Update refs when props change
@@ -94,7 +57,6 @@ export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFilters
     return () => {
       setDistinctValues({});
       setActiveFilters([]);
-      setSearchValue('');
     };
   }, [table]);
 
@@ -102,7 +64,7 @@ export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFilters
   const fetchDistinctValuesForColumn = useCallback(async (
     column: string,
     signal: AbortSignal
-  ): Promise<FetchResult> => {
+  ) => {
     const retryCount = 2; // Number of retries for transient failures
     let lastError: Error | null = null;
 
@@ -219,16 +181,6 @@ export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFilters
     [columns, excludedColumns]
   );
 
-  const getFilteredValues = useCallback((columnValues: readonly DistinctValue[]) => {
-    if (!searchValue) return columnValues;
-    const searchLower = searchValue.toLowerCase();
-    return Object.freeze(
-      columnValues.filter(item => 
-        item.value?.toString().toLowerCase().includes(searchLower)
-      )
-    );
-  }, [searchValue]);
-
   // Atomic state updates
   const handleFilterChange = useCallback((column: string, value: string | null) => {
     setActiveFilters(prev => {
@@ -252,116 +204,38 @@ export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFilters
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <Label>Filter Columns</Label>
-        {activeFilters.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setActiveFilters(Object.freeze([]));
-              onFiltersChange([]);
-            }}
-          >
-            Clear all filters
-          </Button>
-        )}
-      </div>
-
+      <FilterList
+        filters={activeFilters}
+        onRemove={(column) => handleFilterChange(column, null)}
+        onClearAll={() => {
+          setActiveFilters(Object.freeze([]));
+          onFiltersChange([]);
+        }}
+      />
       <div className="space-y-2">
         {filterableColumns.map((column) => {
           const values = distinctValues[column] || [];
           const currentFilter = activeFilters.find(f => f.column === column);
-          const filteredValues = getFilteredValues(values);
           
           return (
             <div key={column} className="flex items-center space-x-2">
-              <Popover 
-                open={openPopover === column} 
-                onOpenChange={(open) => {
-                  if (open) {
-                    setSearchValue('');
-                  }
-                  setOpenPopover(open ? column : null);
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openPopover === column}
-                    className="justify-between w-[250px]"
-                    disabled={loading[column]}
-                  >
-                    {loading[column] ? (
-                      <LoadingSpinner />
-                    ) : (
-                      <>
-                        <span>{currentFilter ? `${column}: ${currentFilter.value}` : column}</span>
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[250px] p-0" align="start">
-                  <Command>
-                    <CommandInput 
-                      placeholder={`Search ${column} values...`} 
-                      value={searchValue}
-                      onValueChange={setSearchValue}
-                    />
-                    <CommandEmpty>No values found.</CommandEmpty>
-                    <CommandGroup>
-                      {filteredValues.map((item) => {
-                        const itemValue = item.value?.toString() ?? 'NULL';
-                        const isSelected = currentFilter?.value === itemValue;
-                        
-                        return (
-                          <CommandItem
-                            key={itemValue}
-                            value={itemValue}
-                            onSelect={() => {
-                              handleFilterChange(column, itemValue);
-                              setOpenPopover(null);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${
-                                isSelected ? "opacity-100" : "opacity-0"
-                              }`}
-                            />
-                            {itemValue} ({item.count})
-                          </CommandItem>
-                        );
-                      })}
-                    </CommandGroup>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-
-              {currentFilter && (
-                <Badge
-                  variant="secondary"
-                  className="cursor-pointer"
-                  onClick={() => handleFilterChange(column, null)}
-                >
-                  {column}: {currentFilter.value}
-                  <span className="ml-1">×</span>
-                </Badge>
-              )}
+              <FilterPopover
+                column={column}
+                values={values}
+                isLoading={loading[column]}
+                onSelect={(value) => handleFilterChange(column, value)}
+                currentValue={currentFilter?.value}
+              />
             </div>
           );
         })}
       </div>
-
-      {activeFilters.length > 0 && (
-        <div className="pt-2">
-          <Separator className="my-2" />
-          <div className="text-sm text-muted-foreground">
-            Active filters: {activeFilters.length}
-          </div>
-        </div>
-      )}
     </div>
   );
-} 
+}
+
+export type { ColumnFilter, DistinctValue };
+export { FilterBadge } from './FilterBadge';
+export { FilterList } from './FilterList';
+export { FilterPopover } from './FilterPopover';
+export { FilterSearch } from './FilterSearch'; 
