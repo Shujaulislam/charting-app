@@ -1,7 +1,6 @@
 // src/components/dashboard/DataTable.tsx
 'use client';
 
-import { useState } from 'react';
 import {
   Table,
   TableBody,
@@ -12,95 +11,127 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { useQuery } from '@tanstack/react-query';
+import { LoadingSpinner } from '../ui/loading-spinner';
+import { useState } from 'react';
 
 type DataTableProps = {
   table: string;
   columns: string[];
 };
 
+type PaginationData = {
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export function DataTable({ table, columns }: DataTableProps) {
   const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<string>();
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  const limit = 50;
+  const pageSize = 10;
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['tableData', table, columns, page, sortBy, sortOrder],
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['tableData', table, columns, page, pageSize],
     queryFn: async () => {
+      if (!table || !columns.length) return null;
+      
       const params = new URLSearchParams({
         table,
         columns: columns.join(','),
         page: page.toString(),
-        limit: limit.toString(),
-        ...(sortBy && { sortBy, sortOrder })
+        pageSize: pageSize.toString()
       });
 
       const response = await fetch(`/api/data?${params}`);
-      if (!response.ok) throw new Error('Failed to fetch data');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch data');
+      }
       return response.json();
-    }
+    },
+    enabled: Boolean(table && columns.length > 0)
   });
 
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortOrder('asc');
-    }
-  };
+  if (!table || !columns.length) {
+    return (
+      <div className="text-center p-4 text-gray-500">
+        Select a table and columns to view data
+      </div>
+    );
+  }
 
-  if (isLoading) return <div>Loading...</div>;
-  if (error) return <div>Error loading data</div>;
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center p-8">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="text-center p-4 text-red-500">
+        Error: {error instanceof Error ? error.message : 'Failed to load data'}
+      </div>
+    );
+  }
+
+  if (!data?.rows?.length) {
+    return (
+      <div className="text-center p-4 text-gray-500">
+        No data found in selected table
+      </div>
+    );
+  }
+
+  const pagination: PaginationData = data.pagination;
 
   return (
     <div className="space-y-4">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {columns.map(column => (
-              <TableHead
-                key={column}
-                className="cursor-pointer"
-                onClick={() => handleSort(column)}
-              >
-                {column}
-                {sortBy === column && (
-                  <span className="ml-2">
-                    {sortOrder === 'asc' ? '↑' : '↓'}
-                  </span>
-                )}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data?.data.map((row: any, i: number) => (
-            <TableRow key={i}>
-              {columns.map(column => (
-                <TableCell key={column}>
-                  {row[column]}
-                </TableCell>
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {columns.map((column) => (
+                <TableHead key={column}>{column}</TableHead>
               ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {data.rows.map((row: any, i: number) => (
+              <TableRow key={i}>
+                {columns.map((column) => (
+                  <TableCell key={column}>
+                    {row[column]?.toString() ?? 'NULL'}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
 
-      <div className="flex justify-between items-center">
-        <div>
-          Page {page} of {data?.pagination.totalPages}
+      <div className="flex items-center justify-between px-2">
+        <div className="text-sm text-gray-500">
+          Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, pagination.total)} of {pagination.total} results
         </div>
-        <div className="space-x-2">
+        <div className="flex items-center space-x-2">
           <Button
+            variant="outline"
+            size="sm"
             onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1}
+            disabled={page <= 1}
           >
             Previous
           </Button>
+          <div className="text-sm">
+            Page {page} of {pagination.totalPages}
+          </div>
           <Button
-            onClick={() => setPage(p => p + 1)}
-            disabled={page >= data?.pagination.totalPages}
+            variant="outline"
+            size="sm"
+            onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
+            disabled={page >= pagination.totalPages}
           >
             Next
           </Button>
