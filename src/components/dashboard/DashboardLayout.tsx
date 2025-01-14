@@ -54,9 +54,8 @@ export function DashboardLayout() {
     document.body.removeChild(a);
   };
 
-  const handleFiltersChange = (filters: ColumnFilter[]) => {
-    setActiveFilters(filters);
-    // Invalidate the data query to trigger a refresh with new filters
+  const handleFiltersChange = (filters: readonly ColumnFilter[]) => {
+    setActiveFilters([...filters]);
     queryClient.invalidateQueries({
       queryKey: ['tableData']
     });
