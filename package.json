@@ -21,6 +21,7 @@
     "@types/date-fns": "^2.5.3",
     "@types/json2csv": "^5.0.7",
     "@types/plotly.js": "^2.35.2",
+    "@types/plotly.js-basic-dist": "^1.54.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",

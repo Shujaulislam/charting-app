@@ -5,8 +5,7 @@ import { useState } from 'react';
 import { TableSelector } from './TableSelector';
 import { DataTable } from './DataTable';
 import { Button } from '../ui/button';
-// TODO: Chart implementation using Plotly.js will be added here
-// Previous recharts implementation removed
+import { PlotlyChart } from '../charts/PlotlyChart';
 import { useDashboardStore } from '@/store/dashboard';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScrollArea } from '../ui/scroll-area';
@@ -30,7 +29,7 @@ export function DashboardLayout() {
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({
-      queryKey: ['tableData']
+      queryKey: ['tableData', 'chartData']
     });
   };
 
@@ -173,11 +172,13 @@ export function DashboardLayout() {
 
           {selectedTable && selectedColumns.length > 0 ? (
             <div className="space-y-8">
-              {/* TODO: New Plotly chart component will be added here */}
               {chartConfig.xAxis && chartConfig.yAxis && (
-                <div className="text-center text-gray-500">
-                  Chart visualization coming soon...
-                </div>
+                <PlotlyChart
+                  table={selectedTable}
+                  xAxis={chartConfig.xAxis}
+                  yAxis={chartConfig.yAxis}
+                  chartType={chartType}
+                />
               )}
 
               <DataTable
