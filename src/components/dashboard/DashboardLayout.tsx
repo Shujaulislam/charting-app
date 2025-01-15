@@ -5,10 +5,10 @@ import { useState } from 'react';
 import { TableSelector } from './TableSelector';
 import { DataTable } from './DataTable';
 import { Button } from '../ui/button';
-import { ChartWrapper } from '../charts/ChartsWrapper';
+// TODO: Chart implementation using Plotly.js will be added here
+// Previous recharts implementation removed
 import { useDashboardStore } from '@/store/dashboard';
 import { useQueryClient } from '@tanstack/react-query';
-import { ColumnFilters } from './ColumnFilters';
 import { ScrollArea } from '../ui/scroll-area';
 
 type ColumnFilter = {
@@ -85,11 +85,14 @@ export function DashboardLayout() {
             {selectedTable && selectedColumns.length > 0 && (
               <>
                 <div className="space-y-4">
+                  {/* Comment out filter-related components */}
+                  {/*
                   <ColumnFilters
                     table={selectedTable}
                     columns={selectedColumns}
                     onFiltersChange={(filters) => handleFiltersChange([...filters])}
                   />
+                  */}
                 </div>
 
                 <div className="space-y-4">
@@ -170,13 +173,11 @@ export function DashboardLayout() {
 
           {selectedTable && selectedColumns.length > 0 ? (
             <div className="space-y-8">
+              {/* TODO: New Plotly chart component will be added here */}
               {chartConfig.xAxis && chartConfig.yAxis && (
-                <ChartWrapper
-                  data={[]} // This will be populated from your data query
-                  type={chartType}
-                  xAxis={chartConfig.xAxis}
-                  yAxis={chartConfig.yAxis}
-                />
+                <div className="text-center text-gray-500">
+                  Chart visualization coming soon...
+                </div>
               )}
 
               <DataTable

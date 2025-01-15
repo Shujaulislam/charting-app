@@ -30,3 +30,10 @@ export async function executeQuery<T>(
     await connection.end();
   }
 }
+
+// Comment out filter-related queries or functions
+/*
+export const filterTableColumns = async () => {
+  // ... filtering logic
+};
+*/

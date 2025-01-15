@@ -1,5 +1,7 @@
-'use client';
-
+// Commenting out entire ColumnFilters component temporarily
+// TODO: Filter columns functionality to be re-implemented later
+/*
+import React from 'react';
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -63,7 +65,7 @@ const fetchWithTimeout = async (url: string, signal: AbortSignal, timeout = 5000
   }
 };
 
-export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFiltersProps) {
+export const ColumnFilters = ({ table, columns, onFiltersChange }: ColumnFiltersProps) => {
   // Use refs for stable identities
   const tableRef = useRef(table);
   const columnsRef = useRef(columns);
@@ -364,4 +366,7 @@ export function ColumnFilters({ table, columns, onFiltersChange }: ColumnFilters
       )}
     </div>
   );
-} 
+};
+
+export default ColumnFilters;
+*/ 
