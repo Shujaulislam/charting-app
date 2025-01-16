@@ -116,9 +116,10 @@ function buildChartQuery(
     case 'pie':
       return `
         SELECT 
-          \`${xAxis}\` as x,
+          COALESCE(\`${xAxis}\`, 'Unknown') as x,
           ${isNumericType(yAxis) ? `SUM(\`${yAxis}\`)` : 'COUNT(*)'} as y
         FROM \`${table}\`
+        WHERE \`${xAxis}\` IS NOT NULL
         GROUP BY \`${xAxis}\`
         ORDER BY y DESC
       `;
@@ -161,6 +162,59 @@ function validateParams(table: string, xAxis: string, yAxis: string): string | n
   }
 
   return null;
+}
+
+// Helper function to validate categorical data
+function isValidCategoricalData(values: any[]): boolean {
+  // Check if we have a reasonable number of unique categories
+  const uniqueValues = new Set(values.map(v => v?.toString())).size;
+  return uniqueValues > 1 && uniqueValues <= 50; // Limit to 50 categories for readability
+}
+
+// Helper function to transform pie chart data
+function transformPieChartData(data: Array<{ x: any; y: number }>) {
+  // 1. Group and aggregate data
+  const aggregated = data.reduce((acc, curr) => {
+    const key = curr.x?.toString() || 'Unknown';
+    acc[key] = (acc[key] || 0) + (Number(curr.y) || 0);
+    return acc;
+  }, {} as Record<string, number>);
+
+  // 2. Sort by value descending
+  const sortedEntries = Object.entries(aggregated)
+    .sort(([, a], [, b]) => b - a);
+
+  // 3. If we have too many categories, group small ones into "Other"
+  const MAX_SLICES = 10;
+  let result: Array<{ label: string; value: number }>;
+  
+  if (sortedEntries.length > MAX_SLICES) {
+    // Take top N-1 categories
+    result = sortedEntries.slice(0, MAX_SLICES - 1).map(([label, value]) => ({
+      label,
+      value
+    }));
+    
+    // Group the rest into "Other"
+    const otherSum = sortedEntries.slice(MAX_SLICES - 1)
+      .reduce((sum, [, value]) => sum + value, 0);
+    
+    result.push({ label: 'Other', value: otherSum });
+  } else {
+    result = sortedEntries.map(([label, value]) => ({
+      label,
+      value
+    }));
+  }
+
+  // 4. Calculate total and percentages
+  const total = result.reduce((sum, { value }) => sum + value, 0);
+  
+  return result.map(item => ({
+    label: item.label,
+    value: item.value,
+    percentage: (item.value / total) * 100
+  }));
 }
 
 export async function GET(request: Request) {
@@ -250,6 +304,43 @@ export async function GET(request: Request) {
         yAxes,
         isAggregated: true,
         seriesFormat: true
+      });
+    }
+
+    // Special handling for pie charts
+    if (chartType === 'pie') {
+      // Validate that we have exactly one y-axis
+      if (yAxes.length !== 1) {
+        return NextResponse.json(
+          { error: 'Pie charts require exactly one y-axis' },
+          { status: 400 }
+        );
+      }
+
+      const yAxis = yAxes[0];
+      const query = buildChartQuery(table, xAxis, yAxis, chartType);
+      const rawData = await executeQuery(query);
+
+      // Validate categorical data
+      if (!isValidCategoricalData((rawData as any[]).map(d => d.x))) {
+        return NextResponse.json(
+          { error: 'Pie chart requires categorical data with 2-50 unique categories' },
+          { status: 400 }
+        );
+      }
+
+      // Transform the data
+      const transformedData = transformPieChartData(rawData as any[]);
+
+      return NextResponse.json({
+        data: [{
+          name: yAxis,
+          data: transformedData
+        }],
+        chartType,
+        xAxis,
+        yAxes: [yAxis],
+        isAggregated: true
       });
     }
 

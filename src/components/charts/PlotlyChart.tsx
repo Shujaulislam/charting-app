@@ -17,9 +17,11 @@ interface PlotlyChartProps {
 }
 
 interface ChartDataPoint {
-  x: any;
-  y: any;
+  x?: any;
+  y?: any;
   value?: any; // For histogram data points
+  label?: string; // For pie chart labels
+  percentage?: number; // For pie chart percentages
 }
 
 interface ChartSeries {
@@ -109,15 +111,12 @@ export function PlotlyChart({ table, xAxis, yAxis, chartType }: PlotlyChartProps
     // Configure data based on chart type
     switch (chartType) {
       case 'pie':
-        // Pie charts only support single series
         const series = chartData.data[0];
-        const total = series.data.reduce((sum, d) => sum + (d.y || 0), 0);
-        
         return {
           data: [{
             type: 'pie',
-            labels: series.data.map(d => d.x),
-            values: series.data.map(d => d.y),
+            labels: series.data.map(d => d.label),
+            values: series.data.map(d => d.value),
             hole: 0.4,
             textinfo: 'label+percent',
             hoverinfo: 'label+value+percent',
@@ -127,7 +126,10 @@ export function PlotlyChart({ table, xAxis, yAxis, chartType }: PlotlyChartProps
               'Percentage: %{percent:.1%}<extra></extra>',
             marker: {
               colors: SERIES_COLORS
-            }
+            },
+            textposition: 'outside',
+            texttemplate: '%{label}: %{percent:.1%}',
+            insidetextorientation: 'horizontal'
           }],
           layout: {
             ...layout,
@@ -136,7 +138,16 @@ export function PlotlyChart({ table, xAxis, yAxis, chartType }: PlotlyChartProps
               y: -0.2,
               xanchor: 'center',
               x: 0.5
-            }
+            },
+            annotations: [{
+              text: series.name,
+              showarrow: false,
+              x: 0.5,
+              y: 0.5,
+              font: {
+                size: 14
+              }
+            }]
           }
         };
 
