@@ -22,7 +22,7 @@ type DataTableProps = {
 
 export function DataTable({ table, columns, filters = [] }: DataTableProps) {
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 20;
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['tableData', table, columns, page, pageSize, filters],

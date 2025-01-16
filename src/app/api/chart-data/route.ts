@@ -94,25 +94,15 @@ async function buildAggregatedQuery(
 }
 
 // Helper function to build SQL query based on chart type
-function buildChartQuery(
+async function buildChartQuery(
   table: string,
   xAxis: string,
   yAxis: string,
   chartType: string
-): string {
-  // Base query for simple x-y relationship
-  const baseQuery = `
-    SELECT 
-      \`${xAxis}\` as x,
-      \`${yAxis}\` as y,
-      COUNT(*) as count
-    FROM \`${table}\`
-    GROUP BY \`${xAxis}\`, \`${yAxis}\`
-    ORDER BY \`${xAxis}\`
-  `;
-
-  // Specific queries for different chart types
+): Promise<string> {
   switch (chartType) {
+    case 'line':
+      return buildLineChartQuery(table, xAxis, yAxis);
     case 'pie':
       return `
         SELECT 
@@ -123,7 +113,6 @@ function buildChartQuery(
         GROUP BY \`${xAxis}\`
         ORDER BY y DESC
       `;
-
     case 'histogram':
       return `
         SELECT 
@@ -132,21 +121,109 @@ function buildChartQuery(
         WHERE \`${xAxis}\` IS NOT NULL
         ORDER BY \`${xAxis}\`
       `;
-
-    case 'line':
+    default:
+      // Default to base query for bar charts and others
       return `
         SELECT 
           \`${xAxis}\` as x,
-          ${isNumericType(yAxis) ? `AVG(\`${yAxis}\`)` : 'COUNT(*)'} as y
+          \`${yAxis}\` as y,
+          COUNT(*) as count
         FROM \`${table}\`
-        GROUP BY \`${xAxis}\`
+        GROUP BY \`${xAxis}\`, \`${yAxis}\`
         ORDER BY \`${xAxis}\`
       `;
-
-    default:
-      // Default to base query for bar charts and others
-      return baseQuery;
   }
+}
+
+// Helper function to validate continuous data
+function isValidContinuousData(dataType: string): boolean {
+  return isNumericType(dataType) || isTemporalType(dataType);
+}
+
+// Helper function to format date values based on granularity
+function getDateFormat(minDate: Date, maxDate: Date): string {
+  const diffDays = Math.abs((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24));
+  
+  if (diffDays <= 1) return '%Y-%m-%d %H:%i'; // hourly
+  if (diffDays <= 31) return '%Y-%m-%d'; // daily
+  if (diffDays <= 365) return '%Y-%m'; // monthly
+  return '%Y'; // yearly
+}
+
+// Helper function to build line chart query
+async function buildLineChartQuery(
+  table: string,
+  xAxis: string,
+  yAxis: string
+): Promise<string> {
+  const xAxisType = await getColumnType(table, xAxis);
+  const yAxisType = await getColumnType(table, yAxis);
+
+  // Validate continuous x-axis data
+  if (!isValidContinuousData(xAxisType)) {
+    throw new Error(`Line charts require continuous data (numeric or date) for x-axis. Got: ${xAxisType}`);
+  }
+
+  // For temporal x-axis, determine date format
+  if (isTemporalType(xAxisType)) {
+    const [minMaxResult] = await executeQuery<Array<{ min_date: Date; max_date: Date }>>(`
+      SELECT 
+        MIN(\`${xAxis}\`) as min_date,
+        MAX(\`${xAxis}\`) as max_date
+      FROM \`${table}\`
+      WHERE \`${xAxis}\` IS NOT NULL
+    `);
+
+    const dateFormat = getDateFormat(minMaxResult.min_date, minMaxResult.max_date);
+
+    return `
+      SELECT 
+        DATE_FORMAT(\`${xAxis}\`, '${dateFormat}') as x,
+        ${isNumericType(yAxisType) ? `AVG(\`${yAxis}\`)` : 'COUNT(*)'} as y
+      FROM \`${table}\`
+      WHERE \`${xAxis}\` IS NOT NULL
+      GROUP BY x
+      ORDER BY MIN(\`${xAxis}\`)
+    `;
+  }
+
+  // For numeric x-axis, use binning for large datasets
+  const [countResult] = await executeQuery<Array<{ count: number }>>(`
+    SELECT COUNT(DISTINCT \`${xAxis}\`) as count 
+    FROM \`${table}\`
+    WHERE \`${xAxis}\` IS NOT NULL
+  `);
+
+  if (countResult.count > MAX_DATA_POINTS) {
+    return `
+      WITH bounds AS (
+        SELECT 
+          MIN(\`${xAxis}\`) as min_val,
+          MAX(\`${xAxis}\`) as max_val,
+          (MAX(\`${xAxis}\`) - MIN(\`${xAxis}\`)) / ${MAX_DATA_POINTS} as bin_size
+        FROM \`${table}\`
+        WHERE \`${xAxis}\` IS NOT NULL
+      )
+      SELECT 
+        ROUND(FLOOR((\`${xAxis}\` - bounds.min_val) / bounds.bin_size) * bounds.bin_size + bounds.min_val, 2) as x,
+        ${isNumericType(yAxisType) ? `AVG(\`${yAxis}\`)` : 'COUNT(*)'} as y
+      FROM \`${table}\`, bounds
+      WHERE \`${xAxis}\` IS NOT NULL
+      GROUP BY x
+      ORDER BY x
+    `;
+  }
+
+  // For smaller datasets, use raw values
+  return `
+    SELECT 
+      \`${xAxis}\` as x,
+      ${isNumericType(yAxisType) ? `AVG(\`${yAxis}\`)` : 'COUNT(*)'} as y
+    FROM \`${table}\`
+    WHERE \`${xAxis}\` IS NOT NULL
+    GROUP BY \`${xAxis}\`
+    ORDER BY \`${xAxis}\`
+  `;
 }
 
 // Helper to validate input parameters
@@ -225,6 +302,7 @@ export async function GET(request: Request) {
     const xAxis = searchParams.get('xAxis') || '';
     const yAxes = (searchParams.get('yAxis') || '').split(',').filter(Boolean);
     const chartType = searchParams.get('chartType') || 'bar';
+    const aggregation = searchParams.get('aggregation') || 'none';
 
     // Validate parameters
     if (!table || !xAxis || yAxes.length === 0) {
@@ -234,22 +312,12 @@ export async function GET(request: Request) {
       );
     }
 
-    // Basic SQL injection prevention
-    const validNameRegex = /^[a-zA-Z0-9_]+$/;
-    if (!validNameRegex.test(table) || !validNameRegex.test(xAxis) || 
-        !yAxes.every(y => validNameRegex.test(y))) {
-      return NextResponse.json(
-        { error: 'Invalid parameter format' },
-        { status: 400 }
-      );
-    }
-
-    // For pie charts, only allow single y-axis
-    if (chartType === 'pie' && yAxes.length > 1) {
-      return NextResponse.json(
-        { error: 'Pie charts only support a single y-axis' },
-        { status: 400 }
-      );
+    // Helper function to get aggregation SQL function
+    function getAggregationFunction(column: string, type: string, dataType: string): string {
+      if (type === 'none') return `\`${column}\``;
+      if (type === 'count') return 'COUNT(*)';
+      if (!isNumericType(dataType)) return 'COUNT(*)';
+      return type === 'sum' ? `SUM(\`${column}\`)` : `AVG(\`${column}\`)`;
     }
 
     // Get column types for all y-axes
@@ -260,99 +328,25 @@ export async function GET(request: Request) {
       }))
     );
 
-    // For non-pie charts, check if any y-axis is non-numeric
-    const nonNumericYAxes = yAxisTypes.filter(y => !isNumericType(y.type));
-    
-    if (chartType !== 'pie' && nonNumericYAxes.length > 0) {
-      // Switch to count aggregation for non-numeric y-axes
-      const queries = nonNumericYAxes.map(y => `
-        SELECT 
-          \`${xAxis}\` as x,
-          COUNT(*) as y,
-          '${y.column}' as series
-        FROM \`${table}\`
-        GROUP BY \`${xAxis}\`
-      `);
+    // Build queries based on aggregation type
+    const queries = yAxes.map(async (y, index) => {
+      const yAxisType = yAxisTypes[index].type;
+      const aggFunction = getAggregationFunction(y, aggregation, yAxisType);
 
-      // Add numeric y-axes with their actual values
-      const numericYAxes = yAxisTypes.filter(y => isNumericType(y.type));
-      queries.push(...numericYAxes.map(y => `
-        SELECT 
-          \`${xAxis}\` as x,
-          AVG(\`${y.column}\`) as y,
-          '${y.column}' as series
-        FROM \`${table}\`
-        GROUP BY \`${xAxis}\`
-      `));
-
-      // Combine all queries
-      const query = queries.join(' UNION ALL ') + ` ORDER BY x, series`;
-      const data = await executeQuery(query);
-
-      // Transform data into series format
-      const seriesData = yAxes.map(series => ({
-        name: series,
-        data: (data as any[])
-          .filter(d => d.series === series)
-          .map(d => ({ x: d.x, y: d.y }))
-      }));
-
-      return NextResponse.json({
-        data: seriesData,
-        chartType,
-        xAxis,
-        yAxes,
-        isAggregated: true,
-        seriesFormat: true
-      });
-    }
-
-    // Special handling for pie charts
-    if (chartType === 'pie') {
-      // Validate that we have exactly one y-axis
-      if (yAxes.length !== 1) {
-        return NextResponse.json(
-          { error: 'Pie charts require exactly one y-axis' },
-          { status: 400 }
-        );
-      }
-
-      const yAxis = yAxes[0];
-      const query = buildChartQuery(table, xAxis, yAxis, chartType);
-      const rawData = await executeQuery(query);
-
-      // Validate categorical data
-      if (!isValidCategoricalData((rawData as any[]).map(d => d.x))) {
-        return NextResponse.json(
-          { error: 'Pie chart requires categorical data with 2-50 unique categories' },
-          { status: 400 }
-        );
-      }
-
-      // Transform the data
-      const transformedData = transformPieChartData(rawData as any[]);
-
-      return NextResponse.json({
-        data: [{
-          name: yAxis,
-          data: transformedData
-        }],
-        chartType,
-        xAxis,
-        yAxes: [yAxis],
-        isAggregated: true
-      });
-    }
-
-    // Build and execute query with smart aggregation for each y-axis
-    const queries = yAxes.map(async y => {
-      const query = await buildAggregatedQuery(table, xAxis, y, chartType);
       return {
         series: y,
-        query: query.replace('SELECT', `SELECT '${y}' as series,`)
+        query: `
+          SELECT 
+            \`${xAxis}\` as x,
+            ${aggFunction} as y,
+            '${y}' as series
+          FROM \`${table}\`
+          GROUP BY \`${xAxis}\`
+        `
       };
     });
 
+    // Combine and execute queries
     const allQueries = await Promise.all(queries);
     const combinedQuery = allQueries.map(q => q.query).join(' UNION ALL ') + ' ORDER BY x, series';
     const data = await executeQuery(combinedQuery);
@@ -371,14 +365,15 @@ export async function GET(request: Request) {
       chartType,
       xAxis,
       yAxes,
-      isAggregated: true,
+      aggregation,
+      isAggregated: aggregation !== 'none',
       seriesFormat: true
     });
 
   } catch (error) {
     console.error('Chart data error:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch chart data' },
+      { error: error instanceof Error ? error.message : 'Failed to fetch chart data' },
       { status: 500 }
     );
   }

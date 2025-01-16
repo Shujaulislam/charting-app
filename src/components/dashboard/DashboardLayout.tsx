@@ -9,6 +9,7 @@ import { PlotlyChart } from '../charts/PlotlyChart';
 import { useDashboardStore } from '@/store/dashboard';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScrollArea } from '../ui/scroll-area';
+import { ChartControls } from './ChartControls';
 
 type ColumnFilter = {
   column: string;
@@ -22,9 +23,7 @@ export function DashboardLayout() {
   const {
     selectedTable,
     selectedColumns,
-    chartType,
-    chartConfig,
-    setChartConfig
+    charts
   } = useDashboardStore();
 
   const handleRefresh = () => {
@@ -94,64 +93,14 @@ export function DashboardLayout() {
                   */}
                 </div>
 
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Chart Type</label>
-                    <select
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={chartType}
-                      onChange={(e) => useDashboardStore.getState().setChartType(
-                        e.target.value as any
-                      )}
-                    >
-                      <option value="bar">Bar Chart</option>
-                      <option value="line">Line Chart</option>
-                      <option value="pie">Pie Chart</option>
-                      <option value="histogram">Histogram</option>
-                    </select>
-                  </div>
+                <ChartControls availableColumns={selectedColumns} />
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">X-Axis</label>
-                    <select
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={chartConfig.xAxis || ''}
-                      onChange={(e) => setChartConfig({
-                        ...chartConfig,
-                        xAxis: e.target.value
-                      })}
-                    >
-                      <option value="">Select Column</option>
-                      {selectedColumns.map(col => (
-                        <option key={col} value={col}>{col}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Y-Axis</label>
-                    <select
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={chartConfig.yAxis || ''}
-                      onChange={(e) => setChartConfig({
-                        ...chartConfig,
-                        yAxis: e.target.value
-                      })}
-                    >
-                      <option value="">Select Column</option>
-                      {selectedColumns.map(col => (
-                        <option key={col} value={col}>{col}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <Button
-                    onClick={handleExport}
-                    className="w-full"
-                  >
-                    Export to CSV
-                  </Button>
-                </div>
+                <Button
+                  onClick={handleExport}
+                  className="w-full"
+                >
+                  Export to CSV
+                </Button>
               </>
             )}
           </div>
@@ -172,14 +121,20 @@ export function DashboardLayout() {
 
           {selectedTable && selectedColumns.length > 0 ? (
             <div className="space-y-8">
-              {chartConfig.xAxis && chartConfig.yAxis && (
-                <PlotlyChart
-                  table={selectedTable}
-                  xAxis={chartConfig.xAxis}
-                  yAxis={chartConfig.yAxis}
-                  chartType={chartType}
-                />
-              )}
+              {charts.map(chart => (
+                <div key={chart.id} className="space-y-4">
+                  {chart.title && (
+                    <h3 className="text-lg font-semibold">{chart.title}</h3>
+                  )}
+                  <PlotlyChart
+                    table={selectedTable}
+                    xAxis={chart.xAxis || ''}
+                    yAxes={chart.yAxes}
+                    chartType={chart.chartType}
+                    aggregation={chart.aggregation}
+                  />
+                </div>
+              ))}
 
               <DataTable
                 table={selectedTable}
