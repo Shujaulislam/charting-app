@@ -1,9 +1,16 @@
 'use client';
 
+import React from 'react';
+import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
-import Plot from 'react-plotly.js';
-import { LoadingSpinner } from '../ui/loading-spinner';
+import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { ChartAggregation } from '@/store/dashboard';
+
+// Dynamically import Plot with ssr disabled
+const Plot = dynamic(() => import('react-plotly.js'), {
+  ssr: false,
+  loading: () => <LoadingSpinner />
+});
 
 interface PlotlyChartProps {
   table: string;

@@ -24,8 +24,27 @@ export async function GET(request: Request) {
       );
     }
 
-    // Build the query with raw data selection
-    const columnList = columns.map(col => `\`${col}\``).join(',');
+      // First, get column types from information schema
+    const typeQuery = `
+      SELECT COLUMN_NAME, DATA_TYPE 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = ? AND COLUMN_NAME IN (${columns.map(() => '?').join(',')})
+    `;
+    const columnTypes = await executeQuery<Array<{COLUMN_NAME: string; DATA_TYPE: string}>>(
+      typeQuery, 
+      [table, ...columns]
+    );
+
+    // Build the query with appropriate CAST for numeric columns
+    const columnList = columns.map(col => {
+      const colType = columnTypes.find(t => t.COLUMN_NAME === col)?.DATA_TYPE.toLowerCase();
+      // Cast numeric types to CHAR to prevent scientific notation
+      if (colType && ['bigint', 'int', 'decimal', 'numeric'].includes(colType)) {
+        return `CAST(\`${col}\` AS CHAR) AS \`${col}\``;
+      }
+      return `\`${col}\``;
+    }).join(',');
+
     const query = `SELECT ${columnList} FROM \`${table}\``;
     
     const data = await executeQuery<Record<string, any>[]>(query);
