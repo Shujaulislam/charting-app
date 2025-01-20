@@ -1,5 +1,178 @@
+/**
+ * Chart Data API Route
+ * Handles requests for chart data with support for different chart types and aggregations
+ * Includes validation, data transformation, and error handling
+ */
+
 import { executeQuery } from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { ChartType, ChartAggregation } from '@/types';
+
+// Valid chart types
+const VALID_CHART_TYPES: ChartType[] = ['bar', 'line', 'pie', 'histogram'];
+
+/**
+ * Validates if a string is a valid SQL identifier
+ * Prevents SQL injection by checking for unsafe characters
+ */
+function isValidIdentifier(str: string): boolean {
+  return /^[a-zA-Z0-9_]+$/.test(str);
+}
+
+/**
+ * Gets the appropriate SQL aggregation function based on aggregation type and data type
+ */
+function getAggregationFunction(aggregation: ChartAggregation, dataType: string): string {
+  if (aggregation === 'none') return '';
+  
+  switch (aggregation) {
+    case 'sum':
+      return 'SUM';
+    case 'avg':
+      return 'AVG';
+    case 'count':
+      return 'COUNT';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Builds the SQL query based on chart type and configuration
+ */
+async function buildChartQuery(
+  table: string,
+  xAxis: string,
+  yAxes: string[],
+  chartType: ChartType,
+  aggregation: ChartAggregation
+): Promise<string> {
+  // Get column types from information schema
+  const typeQuery = `
+    SELECT COLUMN_NAME, DATA_TYPE 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE_NAME = ? AND COLUMN_NAME IN (${[xAxis, ...yAxes].map(() => '?').join(',')})
+  `;
+  const columnTypes = await executeQuery<Array<{COLUMN_NAME: string; DATA_TYPE: string}>>(
+    typeQuery, 
+    [table, xAxis, ...yAxes]
+  );
+
+  // Special handling for pie charts
+  if (chartType === 'pie') {
+    const aggFunc = getAggregationFunction(aggregation, 'number');
+    return `
+      SELECT 
+        COALESCE(${xAxis}, 'Unknown') as x,
+        ${aggFunc}(${yAxes[0]}) as y
+      FROM ${table}
+      WHERE ${xAxis} IS NOT NULL
+      GROUP BY ${xAxis}
+      ORDER BY y DESC
+    `;
+  }
+
+  // Handle other chart types
+  const yAxisQueries = yAxes.map(y => {
+    const dataType = columnTypes.find(t => t.COLUMN_NAME === y)?.DATA_TYPE;
+    const aggFunc = getAggregationFunction(aggregation, dataType || '');
+    return `${aggFunc ? `${aggFunc}(${y})` : y} as "${y}"`;
+  });
+
+  return `
+    SELECT 
+      ${xAxis} as x,
+      ${yAxisQueries.join(', ')}
+    FROM ${table}
+    ${aggregation !== 'none' ? `GROUP BY ${xAxis}` : ''}
+    ORDER BY ${xAxis}
+  `;
+}
+
+/**
+ * Validates if a value is a valid chart type
+ */
+function isValidChartType(value: string): value is ChartType {
+  return VALID_CHART_TYPES.includes(value as ChartType);
+}
+
+/**
+ * Validates if a value is a valid aggregation type
+ */
+function isValidAggregation(value: string): value is ChartAggregation {
+  return ['none', 'sum', 'avg', 'count'].includes(value);
+}
+
+/**
+ * GET handler for chart data
+ * Processes requests and returns formatted data for charts
+ */
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const table = searchParams.get('table');
+  const xAxis = searchParams.get('xAxis');
+  const yAxis = searchParams.get('yAxis');
+  const requestedChartType = searchParams.get('chartType') || '';
+  const requestedAggregation = searchParams.get('aggregation') || 'none';
+
+  // Validate required parameters
+  if (!table || !xAxis || !yAxis) {
+    return NextResponse.json(
+      { error: 'Missing required parameters' },
+      { status: 400 }
+    );
+  }
+
+  // Validate chart type
+  if (!isValidChartType(requestedChartType)) {
+    return NextResponse.json(
+      { error: 'Invalid chart type' },
+      { status: 400 }
+    );
+  }
+  const chartType = requestedChartType;
+
+  // Validate aggregation type
+  if (!isValidAggregation(requestedAggregation)) {
+    return NextResponse.json(
+      { error: 'Invalid aggregation type' },
+      { status: 400 }
+    );
+  }
+  const aggregation = requestedAggregation;
+
+  // Validate identifiers to prevent SQL injection
+  const yAxes = yAxis.split(',');
+  if (![table, xAxis, ...yAxes].every(isValidIdentifier)) {
+    return NextResponse.json(
+      { error: 'Invalid identifier format' },
+      { status: 400 }
+    );
+  }
+
+  try {
+    // Build and execute query
+    const query = await buildChartQuery(table, xAxis, yAxes, chartType, aggregation);
+    const results = await executeQuery<Record<string, any>[]>(query);
+
+    // Transform results into chart-friendly format
+    const chartData = yAxes.map(y => ({
+      name: y,
+      data: results.map(row => ({
+        x: row.x,
+        y: row[y]
+      }))
+    }));
+
+    return NextResponse.json({ data: chartData });
+  } catch (error) {
+    console.error('Chart data error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch chart data' },
+      { status: 500 }
+    );
+  }
+}
 
 // Constants for data aggregation
 const MAX_DATA_POINTS = 50;
@@ -44,7 +217,7 @@ async function buildAggregatedQuery(
   
   // If data size is small enough, return non-aggregated query
   if (count <= MAX_DATA_POINTS) {
-    return buildChartQuery(table, xAxis, yAxis, chartType);
+    return buildChartQuery(table, xAxis, [yAxis], chartType as ChartType, 'none');
   }
   
   // For temporal data, use appropriate date grouping
@@ -91,48 +264,6 @@ async function buildAggregatedQuery(
     ) t
     ORDER BY x
   `;
-}
-
-// Helper function to build SQL query based on chart type
-async function buildChartQuery(
-  table: string,
-  xAxis: string,
-  yAxis: string,
-  chartType: string
-): Promise<string> {
-  switch (chartType) {
-    case 'line':
-      return buildLineChartQuery(table, xAxis, yAxis);
-    case 'pie':
-      return `
-        SELECT 
-          COALESCE(\`${xAxis}\`, 'Unknown') as x,
-          ${isNumericType(yAxis) ? `SUM(\`${yAxis}\`)` : 'COUNT(*)'} as y
-        FROM \`${table}\`
-        WHERE \`${xAxis}\` IS NOT NULL
-        GROUP BY \`${xAxis}\`
-        ORDER BY y DESC
-      `;
-    case 'histogram':
-      return `
-        SELECT 
-          \`${xAxis}\` as value
-        FROM \`${table}\`
-        WHERE \`${xAxis}\` IS NOT NULL
-        ORDER BY \`${xAxis}\`
-      `;
-    default:
-      // Default to base query for bar charts and others
-      return `
-        SELECT 
-          \`${xAxis}\` as x,
-          \`${yAxis}\` as y,
-          COUNT(*) as count
-        FROM \`${table}\`
-        GROUP BY \`${xAxis}\`, \`${yAxis}\`
-        ORDER BY \`${xAxis}\`
-      `;
-  }
 }
 
 // Helper function to validate continuous data
@@ -292,91 +423,6 @@ function transformPieChartData(data: Array<{ x: any; y: number }>) {
     value: item.value,
     percentage: (item.value / total) * 100
   }));
-}
-
-export async function GET(request: Request) {
-  try {
-    // Extract parameters from URL
-    const { searchParams } = new URL(request.url);
-    const table = searchParams.get('table') || '';
-    const xAxis = searchParams.get('xAxis') || '';
-    const yAxes = (searchParams.get('yAxis') || '').split(',').filter(Boolean);
-    const chartType = searchParams.get('chartType') || 'bar';
-    const aggregation = searchParams.get('aggregation') || 'none';
-
-    // Validate parameters
-    if (!table || !xAxis || yAxes.length === 0) {
-      return NextResponse.json(
-        { error: 'Missing required parameters: table, xAxis, yAxis' },
-        { status: 400 }
-      );
-    }
-
-    // Helper function to get aggregation SQL function
-    function getAggregationFunction(column: string, type: string, dataType: string): string {
-      if (type === 'none') return `\`${column}\``;
-      if (type === 'count') return 'COUNT(*)';
-      if (!isNumericType(dataType)) return 'COUNT(*)';
-      return type === 'sum' ? `SUM(\`${column}\`)` : `AVG(\`${column}\`)`;
-    }
-
-    // Get column types for all y-axes
-    const yAxisTypes = await Promise.all(
-      yAxes.map(async y => ({
-        column: y,
-        type: await getColumnType(table, y)
-      }))
-    );
-
-    // Build queries based on aggregation type
-    const queries = yAxes.map(async (y, index) => {
-      const yAxisType = yAxisTypes[index].type;
-      const aggFunction = getAggregationFunction(y, aggregation, yAxisType);
-
-      return {
-        series: y,
-        query: `
-          SELECT 
-            \`${xAxis}\` as x,
-            ${aggFunction} as y,
-            '${y}' as series
-          FROM \`${table}\`
-          GROUP BY \`${xAxis}\`
-        `
-      };
-    });
-
-    // Combine and execute queries
-    const allQueries = await Promise.all(queries);
-    const combinedQuery = allQueries.map(q => q.query).join(' UNION ALL ') + ' ORDER BY x, series';
-    const data = await executeQuery(combinedQuery);
-
-    // Transform data into series format
-    const seriesData = yAxes.map(series => ({
-      name: series,
-      data: (data as any[])
-        .filter(d => d.series === series)
-        .map(d => ({ x: d.x, y: d.y }))
-    }));
-
-    // Return the formatted data with aggregation info
-    return NextResponse.json({
-      data: seriesData,
-      chartType,
-      xAxis,
-      yAxes,
-      aggregation,
-      isAggregated: aggregation !== 'none',
-      seriesFormat: true
-    });
-
-  } catch (error) {
-    console.error('Chart data error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch chart data' },
-      { status: 500 }
-    );
-  }
 }
 
 // Helper function to get distinct count

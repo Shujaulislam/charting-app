@@ -1,32 +1,64 @@
 // src/components/error-boundary.tsx
 'use client';
 
-import { Component, ReactNode } from 'react';
+import React from 'react';
 
-interface Props {
-  children: ReactNode;
+/**
+ * Error Boundary Component
+ * Catches JavaScript errors anywhere in the child component tree
+ * Displays a fallback UI instead of crashing the application
+ */
+
+/**
+ * Props for the ErrorBoundary component
+ */
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
 }
 
-interface State {
+/**
+ * State for the ErrorBoundary component
+ */
+interface ErrorBoundaryState {
   hasError: boolean;
   error?: Error;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false
-  };
+/**
+ * ErrorBoundary Class Component
+ * Implements the error boundary pattern for React
+ * Provides a safe fallback when errors occur in child components
+ */
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
-  public static getDerivedStateFromError(error: Error): State {
+  /**
+   * Static method to derive state from error
+   * Called when a child component throws an error
+   */
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
   }
 
-  public render() {
+  /**
+   * Lifecycle method called after an error is caught
+   * Can be used for logging errors to an error reporting service
+   */
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    console.error('Error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
     if (this.state.hasError) {
-      return (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-          <h2 className="text-red-800 font-semibold">Something went wrong</h2>
-          <p className="text-red-600">{this.state.error?.message}</p>
+      // Render fallback UI when an error occurs
+      return this.props.fallback || (
+        <div className="p-4 text-red-500">
+          <h2 className="text-lg font-bold">Something went wrong</h2>
+          <p className="mt-2">{this.state.error?.message}</p>
         </div>
       );
     }
